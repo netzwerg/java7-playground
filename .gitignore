@@ -1,4 +1,7 @@
 *.class
+gradle.properties
+.idea/**
+*.iml
 
 # Package Files #
 *.jar
