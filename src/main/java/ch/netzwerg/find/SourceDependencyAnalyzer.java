@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.logging.Logger;
@@ -28,24 +29,27 @@ import org.apache.solr.common.SolrInputDocument;
  */
 public class SourceDependencyAnalyzer {
 
+  private static final String ROOT_PATH = "J:\\spu\\test\\maven\\repository\\ch\\basler\\";
   public static final int THREAD_COUNT = 4;
   private static final ConcurrentUpdateSolrServer SERVER = new ConcurrentUpdateSolrServer("http://localhost:8983/solr/baloise", 10, THREAD_COUNT);
-  private static final String SEARCH_PATH = "C:\\DATA\\tmp\\test";
   private static final String FILE_NAME_PATTERN = "*-sources.jar";
   private static final Logger LOGGER = Logger.getLogger(SourceDependencyAnalyzer.class.getName());
   private static final List<String> WHITE_LIST = Arrays.asList(".java", ".xml", ".properties");
+  private static final AtomicInteger COUNTER = new AtomicInteger();
 
   public static void main(String[] args) throws IOException, InterruptedException {
     UploadScheduler scheduler = new UploadScheduler();
-    searchAndUpload(scheduler);
+    searchAndUpload(scheduler, Arrays.asList(args));
     scheduler.shutdown();
   }
 
-  private static Path searchAndUpload(UploadScheduler jobScheduler) throws IOException {
-    FileFinder finder = new FileFinder(FILE_NAME_PATTERN, jobScheduler);
-    Path startingDir = Paths.get(SEARCH_PATH);
-    LOGGER.info(String.format("Searching file tree '%s'...", startingDir));
-    return walkFileTree(startingDir, finder);
+  private static void searchAndUpload(UploadScheduler jobScheduler, List<String> dirsToIndex) throws IOException {
+    for (String dirToIndex : dirsToIndex) {
+      FileFinder finder = new FileFinder(FILE_NAME_PATTERN, jobScheduler);
+      Path startingDir = Paths.get(ROOT_PATH + dirToIndex);
+      LOGGER.info(String.format("Searching file tree '%s'...", startingDir));
+      walkFileTree(startingDir, finder);
+    }
   }
 
   /**
@@ -76,7 +80,7 @@ public class SourceDependencyAnalyzer {
     @Override
     public Void call() throws Exception {
       String pathString = path.toString().toLowerCase();
-      if (pathString.endsWith("-test-sources.jar") || pathString.contains("SNAPSHOT")) {
+      if (pathString.endsWith("-test-sources.jar") || pathString.contains("snapshot")) {
         LOGGER.info(String.format("Skipping\t'%s'", path));
       }
       else {
@@ -88,14 +92,16 @@ public class SourceDependencyAnalyzer {
           if (entry.isDirectory()) {
             LOGGER.info(String.format("Skipping dirs\t'%s'", entry.getName()));
           }
-          else if (matchesWhiteList(entry.getName())){
-            LOGGER.info(String.format("Processing\t'%s'", entry.getName()));
+          else if (matchesWhiteList(entry.getName())) {
             InputStream input = jarFile.getInputStream(entry);
             String contents = new String(IOUtils.toByteArray(input));
-            UpdateResponse rsp = uploadSolrDoc(path + ":" + entry.getName(), contents);
+            String id = path + ":" + entry.getName();
+            LOGGER.info(String.format("Processing\t'%s'", id));
+            UpdateResponse rsp = uploadSolrDoc(id, contents);
             LOGGER.info("Completed with status " + rsp.getStatus());
             closeStream(input);
-          } else {
+          }
+          else {
             LOGGER.info(String.format("Skipping non-whitelisted\t'%s'", entry.getName()));
           }
         }
@@ -120,7 +126,9 @@ public class SourceDependencyAnalyzer {
       UpdateRequest req = new UpdateRequest();
       req.setAction(UpdateRequest.ACTION.COMMIT, false, false);
       req.add(doc);
-      return req.process(SERVER);
+      UpdateResponse update = req.process(SERVER);
+      LOGGER.info("Uploaded document #" + COUNTER.incrementAndGet());
+      return update;
     }
 
     private static void closeStream(InputStream input) {
@@ -128,7 +136,8 @@ public class SourceDependencyAnalyzer {
         if (input != null) {
           input.close();
         }
-      } catch (Throwable t) {
+      }
+      catch (Throwable t) {
         // ignorance is bliss
       }
     }
