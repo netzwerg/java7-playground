@@ -1,1 +1,10 @@
 apply plugin: "java"
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compile 'org.apache.solr:solr-solrj:4.4.0'
+    runtime 'commons-logging:commons-logging:1.1.1'
+}
